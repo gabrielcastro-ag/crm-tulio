@@ -170,7 +170,7 @@ async function checkRenewals() {
 
         const { data: expiringClients, error } = await supabase
             .from('clients')
-            .select('id, name, end_date, plan_type')
+            .select('id, name, end_date, plan_type, phone') // Added phone
             .in('status', ['active', 'expiring']) // Only active or already marked expiring
             .lte('end_date', nextWeek.toISOString().split('T')[0]) // Expiring soon
             .eq('renewal_notice_sent', false); // Not notified yet
@@ -185,7 +185,7 @@ async function checkRenewals() {
 
             expiringClients.forEach(client => {
                 const endDate = new Date(client.end_date).toLocaleDateString('pt-BR');
-                message += `• *${client.name}* (${client.plan_type}) - Vence em: ${endDate}\n`;
+                message += `• *${client.name}* (${client.phone}) - ${client.plan_type}\n  Vence em: ${endDate}\n`;
             });
 
             message += `\nEntre em contato para renovar! 🚀`;
@@ -203,6 +203,8 @@ async function checkRenewals() {
                     .update({ renewal_notice_sent: true })
                     .in('id', ids);
             }
+        } else {
+            console.log(`Checked for renewals: None found expiring in the next 7 days.`);
         }
 
     } catch (err) {
