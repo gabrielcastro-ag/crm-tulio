@@ -140,4 +140,72 @@ const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?:
 
 // Start Loop
 checkAndSend(); // Run immediately on start
-setInterval(checkAndSend, 60 * 1000); // And then every 60s
+checkRenewals(); // Check renewals on start too (or maybe once a day in real world, but here ok)
+
+setInterval(() => {
+    checkAndSend();
+    // We could run renewal check less frequently, e.g. every hour
+    // For now, let's just run it every loop but it relies on database state so it won't spam
+    checkRenewals();
+}, 60 * 1000);
+
+// --- New Function: Check for Expiring Clients ---
+async function checkRenewals() {
+    try {
+        // 1. Get Personal Phone
+        const { data: settings } = await supabase
+            .from('app_settings')
+            .select('value')
+            .eq('key', 'personal_phone')
+            .single();
+
+        const personalPhone = settings?.value;
+
+        if (!personalPhone) return; // No phone configured, skip
+
+        // 2. Find expiring clients (<= 7 days) who haven't been notified yet
+        const today = new Date();
+        const nextWeek = new Date();
+        nextWeek.setDate(today.getDate() + 7);
+
+        const { data: expiringClients, error } = await supabase
+            .from('clients')
+            .select('id, name, end_date, plan_type')
+            .in('status', ['active', 'expiring']) // Only active or already marked expiring
+            .lte('end_date', nextWeek.toISOString().split('T')[0]) // Expiring soon
+            .eq('renewal_notice_sent', false); // Not notified yet
+
+        if (error) throw error;
+
+        if (expiringClients && expiringClients.length > 0) {
+            console.log(`Found ${expiringClients.length} clients expiring without notice.`);
+
+            // 3. Construct Message
+            let message = `⚠️ *Alerta de Renovação - MUDASHAPE*\n\nExistem alunos com planos vencendo em breve:\n`;
+
+            expiringClients.forEach(client => {
+                const endDate = new Date(client.end_date).toLocaleDateString('pt-BR');
+                message += `• *${client.name}* (${client.plan_type}) - Vence em: ${endDate}\n`;
+            });
+
+            message += `\nEntre em contato para renovar! 🚀`;
+
+            // 4. Send to Personal
+            const success = await sendEvolutionMessage(personalPhone, message);
+
+            if (success) {
+                console.log('✅ Renewal alert sent to Personal Trainer.');
+
+                // 5. Mark as notified
+                const ids = expiringClients.map(c => c.id);
+                await supabase
+                    .from('clients')
+                    .update({ renewal_notice_sent: true })
+                    .in('id', ids);
+            }
+        }
+
+    } catch (err) {
+        console.error('Error checking renewals:', err);
+    }
+}
