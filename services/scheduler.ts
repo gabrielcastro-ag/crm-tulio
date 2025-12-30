@@ -140,16 +140,115 @@ const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?:
 
 // Start Loop
 checkAndSend(); // Run immediately on start
-checkRenewals(); // Check renewals on start too (or maybe once a day in real world, but here ok)
+checkRenewals();
+checkFeedbackAutomation(); // Run automation check on start
 
 setInterval(() => {
     checkAndSend();
-    // We could run renewal check less frequently, e.g. every hour
-    // For now, let's just run it every loop but it relies on database state so it won't spam
     checkRenewals();
+    checkFeedbackAutomation();
 }, 60 * 1000);
 
-// --- New Function: Check for Expiring Clients ---
+// ... (existing checkRenewals function) ...
+
+// --- New Function: Check for Feedback Automation ---
+// --- New Function: Check for Feedback Automation ---
+async function checkFeedbackAutomation() {
+    try {
+        const now = new Date().toISOString();
+
+        // 1. Fetch active schedules due to run
+        const { data: schedules, error } = await supabase
+            .from('feedback_schedules')
+            .select('*')
+            .eq('active', true)
+            .lte('next_run_at', now);
+
+        if (error) throw error;
+
+        if (schedules && schedules.length > 0) {
+            console.log(`Found ${schedules.length} automation rules to run.`);
+
+            for (const schedule of schedules) {
+                console.log(`Running Schedule: ${schedule.name} (Service: ${schedule.service_type}, Client: ${schedule.client_id})`);
+
+                // Use questions from the schedule (custom) or fallback to empty array
+                // If schedule.questions is empty/null, we might want to fetch default global questions? 
+                // For V2, we assume they saved the questions into the schedule.
+                let questionsToSend = schedule.questions;
+
+                // Fallback for migrated rules that might have empty questions: fetch global
+                if (!questionsToSend || questionsToSend.length === 0) {
+                    const { data: globalQ } = await supabase
+                        .from('feedback_questions')
+                        .select('*')
+                        .order('order', { ascending: true });
+                    questionsToSend = globalQ || [];
+                }
+
+                if (questionsToSend.length === 0) {
+                    console.log('No questions found for this rule. Skipping.');
+                    continue; // Skip this schedule
+                }
+
+                let clientsToNotify: any[] = [];
+
+                // 2. Determine Target
+                if (schedule.client_id) {
+                    // Target Specific Client
+                    const { data: client } = await supabase
+                        .from('clients')
+                        .select('*')
+                        .eq('id', schedule.client_id)
+                        .single();
+                    if (client) clientsToNotify = [client];
+
+                } else if (schedule.service_type) {
+                    // Target Service Type
+                    const { data: clients } = await supabase
+                        .from('clients')
+                        .select('*')
+                        .eq('service_type', schedule.service_type)
+                        .in('status', ['active', 'expiring']); // Only active clients
+
+                    clientsToNotify = clients || [];
+                }
+
+                if (clientsToNotify.length > 0) {
+                    // 3. Send Message to each client
+                    for (const client of clientsToNotify) {
+                        if (!client.phone) continue;
+
+                        let message = `Fala ${client.name.split(' ')[0]}! Tudo certo? \n\nChegou a hora do nosso check-in (${schedule.name}). Por favor, responda as perguntas abaixo:\n\n`;
+                        questionsToSend.forEach((q: any, idx: number) => {
+                            message += `${idx + 1}. ${q.text}\n`;
+                        });
+                        message += `\nAguardo seu retorno! 💪`;
+
+                        // Send (Async, don't block loop too much)
+                        sendEvolutionMessage(client.phone, message).then(success => {
+                            if (success) console.log(`Feedback request sent to ${client.name}`);
+                        });
+                    }
+                } else {
+                    console.log(`No active clients found for target.`);
+                }
+
+                // 4. Update Next Run
+                const nextRun = new Date();
+                nextRun.setDate(nextRun.getDate() + schedule.frequency_days);
+
+                await supabase
+                    .from('feedback_schedules')
+                    .update({ next_run_at: nextRun.toISOString() })
+                    .eq('id', schedule.id);
+            }
+        }
+
+    } catch (err) {
+        console.error('Error checking feedback automation:', err);
+    }
+}
 async function checkRenewals() {
     try {
         // 1. Get Personal Phone

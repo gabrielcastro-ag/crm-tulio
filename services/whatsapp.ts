@@ -12,13 +12,15 @@ export const sendMessage = async ({ phone, message, attachmentUrl }: SendMessage
 
     // Clean phone number (keep only digits)
     const cleanPhone = phone.replace(/\D/g, '');
+    // Ensure 55 prefix (Brazil) matches scheduler logic
+    const number = cleanPhone.startsWith('55') && cleanPhone.length > 11 ? cleanPhone : `55${cleanPhone}`;
 
     // 1. Try Evolution API (if configured)
     if (evolutionApiUrl && evolutionApiKey) {
         try {
             let endpoint = `${evolutionApiUrl}/message/sendText/${instanceName}`;
             let body: any = {
-                number: cleanPhone,
+                number: number,
                 options: {
                     delay: 1200,
                     presence: "composing",
@@ -32,7 +34,7 @@ export const sendMessage = async ({ phone, message, attachmentUrl }: SendMessage
             if (attachmentUrl) {
                 endpoint = `${evolutionApiUrl}/message/sendMedia/${instanceName}`;
                 body = {
-                    number: cleanPhone,
+                    number: number,
                     options: {
                         delay: 1200,
                         presence: "composing"
@@ -74,7 +76,7 @@ export const sendMessage = async ({ phone, message, attachmentUrl }: SendMessage
 
     // 2. Fallback: Generate WhatsApp Link (Manual send) - ONLY if API keys are missing
     const encodedMessage = encodeURIComponent(message + (attachmentUrl ? `\n\n📄 Ver anexo: ${attachmentUrl}` : ''));
-    const waLink = `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
+    const waLink = `https://wa.me/${number}?text=${encodedMessage}`;
 
     return { success: true, method: 'link', url: waLink };
 };
