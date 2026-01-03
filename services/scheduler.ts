@@ -219,11 +219,10 @@ async function checkFeedbackAutomation() {
                     for (const client of clientsToNotify) {
                         if (!client.phone) continue;
 
-                        let message = `Fala ${client.name.split(' ')[0]}! Tudo certo? \n\nChegou a hora do nosso check-in (${schedule.name}). Por favor, responda as perguntas abaixo:\n\n`;
-                        questionsToSend.forEach((q: any, idx: number) => {
-                            message += `${idx + 1}. ${q.text}\n`;
+                        let message = ``;
+                        questionsToSend.forEach((q: any) => {
+                            message += `${q.text}\n`;
                         });
-                        message += `\nAguardo seu retorno! 💪`;
 
                         // Send (Async, don't block loop too much)
                         sendEvolutionMessage(client.phone, message).then(success => {
