@@ -306,14 +306,18 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
 
     setLoading(true);
 
+    const frequencyDays = parseInt(newSchedule.frequency);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() + frequencyDays);
+
     const { data, error } = await supabase.from('feedback_schedules').insert([{
       name: newSchedule.name,
       service_type: targetType === 'service' ? newSchedule.service_type : null,
       client_id: targetType === 'client' ? newSchedule.client_id : null,
-      frequency_days: parseInt(newSchedule.frequency),
+      frequency_days: frequencyDays,
       active: true,
       questions: customQuestions, // Save the custom list
-      next_run_at: new Date().toISOString() // Start immediately
+      next_run_at: startDate.toISOString() // Start in future
     }]).select();
 
     setLoading(false);
