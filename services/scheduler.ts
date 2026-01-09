@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 // Configuration
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY; // Or SERVICE_ROLE_KEY if you want to bypass RLS
+const SUPABASE_KEY = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY; // Use Service Role if available
 const EVO_API_URL = process.env.VITE_EVOLUTION_API_URL;
 const EVO_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
 const EVO_INSTANCE = process.env.VITE_EVOLUTION_INSTANCE;
