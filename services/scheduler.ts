@@ -65,7 +65,7 @@ const processItem = async (item: any) => {
 
     try {
         // Send via Evolution API
-        const success = await sendEvolutionMessage(client.phone, item.message, item.attachment_url);
+        const success = await sendEvolutionMessage(client.phone, item.message, item.attachment_url, item.attachment_name);
 
         if (success) {
             // Update status to sent
@@ -85,7 +85,7 @@ const processItem = async (item: any) => {
     }
 };
 
-const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?: string) => {
+const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?: string, fileName?: string) => {
     try {
         const cleanPhone = phone.replace(/\D/g, '');
         const number = `55${cleanPhone}`; // Assuming BR format, adjust if needed
@@ -102,7 +102,7 @@ const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?:
                 mimetype: "application/pdf",
                 caption: text || "",
                 media: attachmentUrl,
-                fileName: "document.pdf"
+                fileName: fileName || "document.pdf"
             };
         } else {
             // Send Text
