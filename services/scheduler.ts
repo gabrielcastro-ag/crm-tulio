@@ -219,15 +219,47 @@ async function checkFeedbackAutomation() {
                     for (const client of clientsToNotify) {
                         if (!client.phone) continue;
 
-                        let message = ``;
-                        questionsToSend.forEach((q: any) => {
-                            message += `${q.text}\n`;
-                        });
+                        try {
+                            // Create Submission Record
+                            const { data: sub, error: subError } = await supabase
+                                .from('feedback_submissions')
+                                .insert([{
+                                    client_id: client.id,
+                                    created_at: new Date().toISOString(),
+                                    status: 'pending',
+                                    answers: null,
+                                    questions_snapshot: questionsToSend
+                                }])
+                                .select()
+                                .single();
 
-                        // Send (Async, don't block loop too much)
-                        sendEvolutionMessage(client.phone, message).then(success => {
-                            if (success) console.log(`Feedback request sent to ${client.name}`);
-                        });
+                            if (subError || !sub) {
+                                console.error(`Failed to create submission for ${client.name}`, subError);
+                                continue;
+                            }
+
+                            // Generate Link (Assuming local dev default, or logic to be updated for prod)
+                            const baseUrl = process.env.APP_BASE_URL || 'http://localhost:5173';
+                            const link = `${baseUrl}/feedback/${sub.id}`;
+
+                            // Determine label
+                            const frequencyMap: Record<number, string> = {
+                                7: 'semanal',
+                                15: 'quinzenal',
+                                30: 'mensal'
+                            };
+                            const typeLabel = frequencyMap[schedule.frequency_days] || 'programado';
+
+                            const message = `Olá ${client.name.split(' ')[0]}! 👋\n\nChegou a hora do seu check-in ${typeLabel}.\nPor favor, responda as perguntas no link abaixo:\n\n🔗 ${link}\n\nObrigado! 🚀`;
+
+                            // Send (Async, don't block loop too much)
+                            sendEvolutionMessage(client.phone, message).then(success => {
+                                if (success) console.log(`Feedback LINK sent to ${client.name}`);
+                            });
+
+                        } catch (err) {
+                            console.error(`Error processing Client ${client.name}`, err);
+                        }
                     }
                 } else {
                     console.log(`No active clients found for target.`);
