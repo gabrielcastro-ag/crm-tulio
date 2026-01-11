@@ -238,8 +238,8 @@ async function checkFeedbackAutomation() {
                                 continue;
                             }
 
-                            // Generate Link (Assuming local dev default, or logic to be updated for prod)
-                            const baseUrl = process.env.APP_BASE_URL || 'http://localhost:5173';
+                            // Generate Link (Production Domain)
+                            const baseUrl = process.env.VITE_APP_BASE_URL || 'https://crm.tuliocabral.com.br';
                             const link = `${baseUrl}/feedback/${sub.id}`;
 
                             // Determine label
