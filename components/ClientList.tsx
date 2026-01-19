@@ -1,9 +1,13 @@
 
-import React, { useState } from 'react';
-import { Client, ClientStatus } from '../types';
-import { Search, Filter, MessageCircle, Calendar, Edit, Trash2, Plus } from 'lucide-react';
+
+import React, { useState, useEffect } from 'react';
+import { Client, ClientStatus, ServiceType } from '../types';
+import { Search, Filter, MessageCircle, Calendar, Edit, Trash2, Plus, Briefcase } from 'lucide-react';
 import { ClientManager } from './ClientManager';
 import { ClientForm } from './ClientForm';
+import { supabase } from '../services/supabase';
+import { CustomSelect } from './CustomSelect';
+import { translatePlanType } from '../utils/formatters';
 
 interface ClientListProps {
   clients: Client[];
@@ -14,18 +18,33 @@ interface ClientListProps {
 
 export const ClientList: React.FC<ClientListProps> = ({ clients, setClients, onDeleteClient, refreshClients }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedServiceType, setSelectedServiceType] = useState<string>('');
+  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
+
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [isClientFormOpen, setIsClientFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
-  const filteredClients = clients.filter(client =>
-    client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.email?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    fetchServiceTypes();
+  }, []);
+
+  const fetchServiceTypes = async () => {
+    const { data } = await supabase.from('service_types').select('*').order('name');
+    if (data) setServiceTypes(data);
+  };
+
+  const filteredClients = clients.filter(client => {
+    const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.email?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesService = selectedServiceType ? client.service_type === selectedServiceType : true;
+
+    return matchesSearch && matchesService;
+  });
 
   const handleUpdateClient = () => {
     refreshClients(); // Refresh list from DB
-    // setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
   };
 
   const getStatusColor = (status: ClientStatus) => {
@@ -49,19 +68,22 @@ export const ClientList: React.FC<ClientListProps> = ({ clients, setClients, onD
   return (
     <div className="animate-fade-in">
       {/* Header Actions */}
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-center mb-8 gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">Meus Clientes</h2>
           <p className="text-gray-400">Gerencie planos, renovações e conteúdos.</p>
         </div>
-        <div className="flex gap-3 w-full md:w-auto">
+        <div className="flex flex-col md:flex-row gap-3 w-full xl:w-auto">
+
+          {/* New Client Button */}
           <button
             onClick={() => { setEditingClient(null); setIsClientFormOpen(true); }}
-            className="bg-primary-600 hover:bg-primary-500 text-white px-4 py-2.5 rounded-xl font-bold flex items-center transition-colors shadow-lg shadow-primary-900/20"
+            className="bg-primary-600 hover:bg-primary-500 text-white px-4 py-2.5 rounded-xl font-bold flex items-center transition-colors shadow-lg shadow-primary-900/20 justify-center whitespace-nowrap"
           >
             <Plus size={18} className="mr-2" /> Novo Aluno
           </button>
 
+          {/* Search */}
           <div className="relative flex-1 md:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             <input
@@ -72,6 +94,21 @@ export const ClientList: React.FC<ClientListProps> = ({ clients, setClients, onD
               className="w-full bg-dark-800 border border-gray-700 text-white pl-10 pr-4 py-2.5 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all"
             />
           </div>
+
+          {/* Service Filter */}
+          <div className="relative md:w-48">
+            <CustomSelect
+              icon={Filter}
+              options={[
+                { value: '', label: 'Todos Serviços' },
+                ...serviceTypes.map(t => ({ label: t.name, value: t.name }))
+              ]}
+              value={selectedServiceType}
+              onChange={(val) => setSelectedServiceType(val)}
+              placeholder="Todos Serviços"
+            />
+          </div>
+
         </div>
       </div>
 
@@ -85,8 +122,8 @@ export const ClientList: React.FC<ClientListProps> = ({ clients, setClients, onD
               {getStatusLabel(client.status)}
             </div>
 
-            {/* Quick Actions (Hover) */}
-            <div className="absolute top-4 left-4 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all z-10">
+            {/* Quick Actions (Hover on Desktop, Always Visible on Mobile) */}
+            <div className="absolute top-4 left-4 flex space-x-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all z-10">
               <button
                 onClick={() => { setEditingClient(client); setIsClientFormOpen(true); }}
                 className="p-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500 hover:text-white transition-colors"
@@ -122,19 +159,28 @@ export const ClientList: React.FC<ClientListProps> = ({ clients, setClients, onD
               </div>
               <div>
                 <h3 className="text-lg font-bold text-white group-hover:text-primary-400 transition-colors">{client.name}</h3>
-                <p className="text-gray-500 text-sm">{client.plan_type}</p>
+                <div className="flex flex-col gap-1">
+                  <span className="text-gray-500 text-sm">{translatePlanType(client.plan_type)}</span>
+                  {client.service_type && (
+                    <span className="text-xs bg-primary-500/20 text-primary-300 px-2 py-0.5 rounded w-fit flex items-center">
+                      <Briefcase size={10} className="mr-1" /> {client.service_type}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="space-y-3 mb-6">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">Início</span>
-                <span className="text-gray-300">{client.start_date ? new Date(client.start_date).toLocaleDateString() : '-'}</span>
+                <span className="text-gray-300">
+                  {client.start_date ? client.start_date.split('-').reverse().join('/') : '-'}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">Término</span>
                 <span className={`font-medium ${client.status === 'expiring' ? 'text-amber-400' : 'text-gray-300'}`}>
-                  {client.end_date ? new Date(client.end_date).toLocaleDateString() : '-'}
+                  {client.end_date ? client.end_date.split('-').reverse().join('/') : '-'}
                 </span>
               </div>
               {/* Note: Schedules logic needs to be fetched separately ideally, or we assume it's not populated in list view for performance, but for now we removed valid schedule count */}

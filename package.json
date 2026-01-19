@@ -7,18 +7,29 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "scheduler": "tsx services/scheduler.ts"
+    "scheduler": "tsx services/scheduler.ts",
+    "server": "tsx services/server.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
     "date-fns": "^4.1.0",
+    "express": "^5.2.1",
     "lucide-react": "^0.562.0",
+    "multer": "^2.0.2",
+    "openai": "^6.16.0",
+    "pdf-parse": "^2.4.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "recharts": "^3.6.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
     "@types/node": "^22.14.0",
+    "@types/pdf-parse": "^1.1.5",
     "@vitejs/plugin-react": "^5.0.0",
     "dotenv": "^17.2.3",
     "tsx": "^4.21.0",

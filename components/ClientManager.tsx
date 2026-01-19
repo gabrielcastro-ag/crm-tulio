@@ -3,7 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { Client, ScheduleItem } from '../types';
 import { supabase } from '../services/supabase';
 import { sendMessage } from '../services/whatsapp';
-import { X, MessageCircle, Calendar as CalendarIcon, FileText, Trash2, Edit2, Plus, Wand2, Send, Loader2 } from 'lucide-react';
+import { X, MessageCircle, Calendar as CalendarIcon, FileText, Trash2, Edit2, Plus, Send, Loader2, ArrowUp, ArrowDown, Type } from 'lucide-react';
+import { CustomSelect } from './CustomSelect';
+import { translatePlanType, translateStatus, translateScheduleType } from '../utils/formatters';
 
 interface ClientManagerProps {
   client: Client;
@@ -15,47 +17,51 @@ interface DraftItem {
   id: string; // temp id
   date: string;
   time: string; // NEW
-  message: string;
-  file: File | null;
-  fileName: string;
   type: 'workout' | 'diet' | 'general';
+  items: ScheduleCompositionItem[];
+}
+
+interface ScheduleCompositionItem {
+  id: string;
+  type: 'text' | 'file';
+  content?: string; // for text
+  file?: File | null; // for file
+  fileName?: string; // for file display
 }
 
 export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, onUpdateClient }) => {
+  const [activeTab, setActiveTab] = useState<'single' | 'batch'>('single');
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // State for adding/editing schedule
-  const [isEditingSchedule, setIsEditingSchedule] = useState<string | null>(null); // ID of item being edited
-  const [activeTab, setActiveTab] = useState<'single' | 'batch'>('single');
+  const [saving, setSaving] = useState(false);
+  const [isEditingSchedule, setIsEditingSchedule] = useState<string | null>(null); // Restored state
 
-  // Single Mode State
-  const [formData, setFormData] = useState<{
-    date: string;
-    time: string; // NEW
-    message: string;
-    file: File | null;
-    fileName: string;
-    type: 'workout' | 'diet' | 'general';
-  }>({
+  // Form Data (Single)
+  const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
-    time: '09:00', // Default time
-    message: '',
-    file: null,
-    fileName: '',
-    type: 'general'
+    time: '09:00',
+    type: 'general' as 'workout' | 'diet' | 'checkin' | 'general',
+    // Composition Items (New)
+    items: [] as ScheduleCompositionItem[]
   });
 
-  // Batch Mode State
+  // Initialize with one text item if empty
+  useEffect(() => {
+    if (formData.items.length === 0) {
+      setFormData(prev => ({ ...prev, items: [{ id: Math.random().toString(36), type: 'text', content: '' }] }));
+    }
+  }, []);
+
+  // Batch Drafts
   const [batchSettings, setBatchSettings] = useState({
     startDate: new Date().toISOString().split('T')[0],
-    startTime: '09:00', // Default time
+    startTime: '09:00',
     months: 3,
+    type: 'general' as const,
     baseMessage: ''
   });
   const [batchDrafts, setBatchDrafts] = useState<DraftItem[]>([]);
-
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchSchedules();
@@ -71,6 +77,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
         const date = new Date(baseDate);
         date.setMonth(baseDate.getMonth() + i);
 
+
         // Preserve existing draft content if available
         const existing = batchDrafts[i];
 
@@ -78,10 +85,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
           id: existing?.id || Math.random().toString(36).substr(2, 9),
           date: existing?.date || date.toISOString().split('T')[0],
           time: existing?.time || batchSettings.startTime, // Use existing or global setting
-          message: existing ? existing.message : '',
-          file: existing ? existing.file : null,
-          fileName: existing ? existing.fileName : '',
-          type: 'general'
+          type: existing?.type || batchSettings.type,
+          items: existing?.items || [{ id: Math.random().toString(36), type: 'text', content: batchSettings.baseMessage || '' }]
         });
       }
       setBatchDrafts(drafts);
@@ -129,43 +134,63 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
   };
 
   const handleSaveSingle = async () => {
-    if (!client.id) return;
+    // Validation
+    if (!formData.date || !formData.time) return alert('Selecione data e hora.');
+    if (formData.items.length === 0) return alert('Adicione pelo menos uma mensagem ou arquivo.');
+
+    // Check if any text item is empty
+    const hasEmptyText = formData.items.some(i => i.type === 'text' && !i.content?.trim());
+    if (hasEmptyText) return alert('Preencha o texto de todas as mensagens.');
+
     setSaving(true);
+
+    const scheduledDate = new Date(`${formData.date}T${formData.time}`); // Local to ISO? careful with timezone
+    // The input type=date/time gives local strings. Constructing Date() creates local. toISOString() converts to UTC.
+    // Correct.
+
     try {
-      let publicUrl = null;
-      if (formData.file) {
-        publicUrl = await uploadFile(formData.file);
-        if (!publicUrl) throw new Error('Falha no upload do PDF');
-      }
+      // Loop through items and save sequentially with +1 second offset
+      for (let i = 0; i < formData.items.length; i++) {
+        const item = formData.items[i];
+        const offsetDate = new Date(scheduledDate.getTime() + (i * 1000)); // +1 second per item to keep order
 
-      const fullDate = combineDateTime(formData.date, formData.time);
+        let attachmentUrl = '';
 
-      if (isEditingSchedule) {
-        const { error } = await supabase.from('schedules').update({
-          date: fullDate,
-          message: formData.message,
-          attachment_url: publicUrl,
-          attachment_name: formData.fileName
-        }).eq('id', isEditingSchedule);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('schedules').insert({
+        if (item.type === 'file' && item.file) {
+          const fileExt = item.file.name.split('.').pop();
+          const filePath = `${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
+          const { error: uploadError } = await supabase.storage.from('pdfs').upload(filePath, item.file);
+          if (uploadError) throw uploadError;
+
+          const { data: urlData } = supabase.storage.from('pdfs').getPublicUrl(filePath);
+          attachmentUrl = urlData.publicUrl;
+        }
+
+        const payload = {
           client_id: client.id,
-          date: fullDate,
+          date: offsetDate.toISOString(),
           type: formData.type,
-          message: formData.message,
-          attachment_url: publicUrl || undefined,
-          attachment_name: formData.fileName || undefined,
+          message: item.type === 'text' ? item.content : null,
+          attachment_url: attachmentUrl || null,
+          attachment_name: item.type === 'file' ? item.fileName : null,
           status: 'pending'
-        });
+        };
+
+        const { error } = await supabase.from('schedules').insert([payload]);
         if (error) throw error;
       }
 
-      resetForm();
+      // Reset form
+      setFormData({
+        date: new Date().toISOString().split('T')[0],
+        time: '09:00',
+        type: 'workout',
+        items: [{ id: Math.random().toString(36), type: 'text', content: '' }]
+      });
       fetchSchedules();
-    } catch (err) {
-      alert('Erro ao salvar agendamento.');
-      console.error(err);
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao agendar.');
     } finally {
       setSaving(false);
     }
@@ -178,23 +203,32 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
       const newItems = [];
       // Process each draft sequentially to handle uploads
       for (const draft of batchDrafts) {
-        let publicUrl = undefined;
-        if (draft.file) {
-          const url = await uploadFile(draft.file);
-          if (url) publicUrl = url;
+        // Validation per draft? Maybe skip empty ones or alert?
+        // For now, if items exist, we process.
+
+        const draftDate = new Date(`${draft.date}T${draft.time}`);
+
+        for (let i = 0; i < draft.items.length; i++) {
+          const item = draft.items[i];
+          // Offset time by 1 second for each item to maintain order
+          const offsetDate = new Date(draftDate.getTime() + (i * 1000));
+
+          let attachmentUrl = undefined;
+          if (item.type === 'file' && item.file) {
+            const url = await uploadFile(item.file);
+            if (url) attachmentUrl = url;
+          }
+
+          newItems.push({
+            client_id: client.id,
+            date: offsetDate.toISOString(),
+            type: draft.type,
+            message: item.type === 'text' ? item.content : null,
+            attachment_url: attachmentUrl,
+            attachment_name: item.type === 'file' ? (item.fileName || 'document.pdf') : null,
+            status: 'pending'
+          });
         }
-
-        const fullDate = combineDateTime(draft.date, draft.time);
-
-        newItems.push({
-          client_id: client.id,
-          date: fullDate,
-          type: draft.type,
-          message: draft.message,
-          attachment_url: publicUrl,
-          attachment_name: draft.fileName || undefined,
-          status: 'pending'
-        });
       }
 
       const { error } = await supabase.from('schedules').insert(newItems);
@@ -217,20 +251,42 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
     setIsEditingSchedule(item.id);
 
     const d = new Date(item.date);
-    // Rough way to extract local date/time parts if saved as UTC
-    // Depending on timezone needs, might need better handling
-    // For now simple split
     const dateStr = item.date.split('T')[0];
     const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    // Determine if it's a file or text
+    let newItems: ScheduleCompositionItem[] = [];
+
+    if (item.attachment_name || item.attachment_url) {
+      newItems.push({
+        id: Math.random().toString(36),
+        type: 'file',
+        fileName: item.attachment_name || 'Arquivo Anexado',
+        // Note: We can't recover the File object, but we can keep the URL if we wanted. 
+        // For now, editing a file implies re-uploading if changed, or we warn user.
+        // But the current flow expects a File object for upload.
+        // Simplified: If editing, we show the name. If they don't change it, we might need logic to keep existing URL.
+        // For now, let's treat it as a visual placeholder.
+      });
+    } else {
+      newItems.push({
+        id: Math.random().toString(36),
+        type: 'text',
+        content: item.message || ''
+      });
+    }
 
     setFormData({
       date: dateStr,
       time: timeStr,
-      message: item.message,
-      file: null,
-      fileName: item.attachment_name || '',
-      type: item.type as any
+      type: item.type as any,
+      items: newItems
     });
+
+    // Auto-scroll to form (UX improvement for mobile)
+    setTimeout(() => {
+      document.getElementById('schedule-form')?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
   };
 
   const handleDeleteSchedule = async (id: string) => {
@@ -268,31 +324,14 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
     setFormData({
       date: new Date().toISOString().split('T')[0],
       time: '09:00',
-      message: '',
-      file: null,
-      fileName: '',
-      type: 'general'
+      type: 'general',
+      items: [{ id: Math.random().toString(36), type: 'text', content: '' }]
     });
     setBatchSettings({ startDate: new Date().toISOString().split('T')[0], startTime: '09:00', months: 3, baseMessage: '' });
     setBatchDrafts([]);
   };
 
-  const generateAIMessage = (target: 'single' | number) => {
-    const messages = [
-      `Olá ${client.name}! Preparado para superar seus limites este mês? Segue em anexo seu novo plano. 💪`,
-      `Fala ${client.name}, tudo bem? Enviando as atualizações do seu protocolo. Vamos pra cima! 🚀`,
-      `Oi ${client.name}! Passando para deixar seu novo planejamento. Foco total! 🔥`
-    ];
-    const msg = messages[Math.floor(Math.random() * messages.length)];
 
-    if (target === 'single') {
-      setFormData({ ...formData, message: msg });
-    } else {
-      const newDrafts = [...batchDrafts];
-      newDrafts[target].message = msg;
-      setBatchDrafts(newDrafts);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
@@ -313,7 +352,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
                   <MessageCircle size={12} className="mr-1" /> WhatsApp
                 </span>
                 <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded">
-                  {client.plan_type}
+                  {translatePlanType(client.plan_type)}
                 </span>
               </div>
             </div>
@@ -324,10 +363,10 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row">
+        <div className="flex-1 overflow-y-auto flex flex-col-reverse lg:flex-row">
 
           {/* Left Panel: List of Schedules */}
-          <div className="lg:w-1/3 p-6 border-r border-gray-800 bg-dark-900/50 hidden lg:block overflow-y-auto">
+          <div className="w-full lg:w-1/3 p-6 border-t lg:border-t-0 lg:border-r border-gray-800 bg-dark-900/50 block h-auto">
             <h3 className="text-lg font-bold text-white mb-4 flex items-center">
               <CalendarIcon className="mr-2 text-primary-500" size={20} />
               Histórico / Futuro
@@ -336,6 +375,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
               <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary-500" /></div>
             ) : (
               <div className="space-y-3">
+                {schedules.length === 0 && <p className="text-gray-500 text-sm text-center py-4">Nenhum agendamento encontrado.</p>}
                 {schedules.map((item) => (
                   <div key={item.id} className={`p-4 rounded-xl border transition-all ${isEditingSchedule === item.id ? 'bg-primary-900/10 border-primary-500' : 'bg-dark-800 border-gray-700'}`}>
                     <div className="flex justify-between items-start mb-2">
@@ -343,6 +383,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
                         <CalendarIcon size={14} className="mr-1" />
                         {new Date(item.date).toLocaleDateString()} <span className="text-gray-500 text-xs ml-1">({new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</span>
                       </span>
+                      <span className="hidden sm:inline-block text-[10px] bg-dark-900 text-gray-400 px-1.5 py-0.5 rounded border border-gray-700 uppercase">{translateScheduleType(item.type)}</span>
                       <div className="flex space-x-1">
                         <button onClick={() => handleSendNow(item)} className="p-1.5 bg-green-500/10 text-green-400 rounded hover:bg-green-500 hover:text-white"><Send size={14} /></button>
                         <button onClick={() => handleEditClick(item)} className="p-1.5 bg-blue-500/10 text-blue-400 rounded hover:bg-blue-500 hover:text-white"><Edit2 size={14} /></button>
@@ -355,7 +396,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
                         <FileText size={12} /> <span className="truncate">{item.attachment_name}</span>
                       </div>
                     )}
-                    <div className="mt-1 text-[10px] text-right text-gray-500 uppercase font-bold">{item.status}</div>
+                    <div className="mt-1 text-[10px] text-right text-gray-500 uppercase font-bold">{translateStatus(item.status)}</div>
                   </div>
                 ))}
               </div>
@@ -363,7 +404,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
           </div>
 
           {/* Right Panel: Form Area */}
-          <div className="lg:w-2/3 p-6 bg-dark-800 flex flex-col" id="schedule-form">
+          <div className="w-full lg:w-2/3 p-6 bg-dark-800 flex flex-col" id="schedule-form">
 
             {/* Tabs */}
             {!isEditingSchedule && (
@@ -396,52 +437,128 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm text-gray-400 mb-1">Data</label>
-                    <input type="date" value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none" />
+                    <input type="date" value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none [color-scheme:dark]" />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-400 mb-1">Horário</label>
-                    <input type="time" value={formData.time} onChange={e => setFormData({ ...formData, time: e.target.value })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none" />
+                    <input type="time" value={formData.time} onChange={e => setFormData({ ...formData, time: e.target.value })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none [color-scheme:dark]" />
                   </div>
                 </div>
 
                 <div className="mb-4">
                   <label className="block text-sm text-gray-400 mb-1">Tipo</label>
-                  <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value as any })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white outline-none">
-                    <option value="general">Geral</option>
-                    <option value="workout">Treino</option>
-                    <option value="diet">Dieta</option>
-                  </select>
+                  <CustomSelect
+                    value={formData.type}
+                    onChange={val => setFormData({ ...formData, type: val as any })}
+                    options={[
+                      { value: 'general', label: 'Geral' },
+                      { value: 'workout', label: 'Treino' },
+                      { value: 'diet', label: 'Dieta' }
+                    ]}
+                  />
                 </div>
 
                 <div>
-                  <div className="flex justify-between mb-1">
-                    <label className="text-sm text-gray-400">Mensagem</label>
-                    <button onClick={() => generateAIMessage('single')} className="text-xs text-primary-400 flex items-center gap-1"><Wand2 size={12} /> Sugerir AI</button>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-sm text-gray-400">Conteúdo do Envio (Mensagens e Arquivos)</label>
                   </div>
-                  <textarea rows={4} value={formData.message} onChange={e => setFormData({ ...formData, message: e.target.value })} className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none resize-none" />
+
+                  <div className="space-y-3 mb-4">
+                    {formData.items.map((item, index) => (
+                      <div key={item.id} className="bg-dark-800 border border-gray-700 rounded-xl p-3 animate-fade-in relative group">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                            {item.type === 'text' ? <><MessageCircle size={10} /> Mensagem</> : <><FileText size={10} /> Arquivo PDF</>}
+                            <span className="ml-2 font-normal text-gray-600">#{index + 1}</span>
+                          </span>
+                          <div className="flex gap-1">
+                            <button
+                              disabled={index === 0}
+                              onClick={() => {
+                                const newItems = [...formData.items];
+                                [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
+                                setFormData({ ...formData, items: newItems });
+                              }}
+                              className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-white disabled:opacity-30"
+                            >
+                              <ArrowUp size={12} />
+                            </button>
+                            <button
+                              disabled={index === formData.items.length - 1}
+                              onClick={() => {
+                                const newItems = [...formData.items];
+                                [newItems[index + 1], newItems[index]] = [newItems[index], newItems[index + 1]];
+                                setFormData({ ...formData, items: newItems });
+                              }}
+                              className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-white disabled:opacity-30"
+                            >
+                              <ArrowDown size={12} />
+                            </button>
+                            <button
+                              onClick={() => setFormData({ ...formData, items: formData.items.filter(i => i.id !== item.id) })}
+                              className="p-1 hover:bg-red-500/20 rounded text-red-500 hover:text-red-400 ml-1"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {item.type === 'text' ? (
+                          <textarea
+                            rows={3}
+                            placeholder="Digite a mensagem..."
+                            value={item.content || ''}
+                            onChange={e => {
+                              const newItems = [...formData.items];
+                              newItems[index].content = e.target.value;
+                              setFormData({ ...formData, items: newItems });
+                            }}
+                            className="w-full bg-dark-900 border border-gray-700 rounded-lg p-3 text-white focus:border-primary-500 outline-none resize-none text-sm"
+                          />
+                        ) : (
+                          <div className="flex gap-2">
+                            <label className="flex-1 bg-dark-900 border border-gray-700 rounded-lg p-3 flex items-center justify-center cursor-pointer hover:border-primary-500 transition-colors">
+                              <FileText className="text-gray-500 mr-2" />
+                              <span className="text-gray-300 text-sm truncate">{item.fileName || "Selecionar PDF..."}</span>
+                              <input type="file" accept=".pdf" className="hidden" onChange={e => {
+                                if (e.target.files?.[0]) {
+                                  const newItems = [...formData.items];
+                                  newItems[index].file = e.target.files[0];
+                                  newItems[index].fileName = e.target.files[0].name;
+                                  setFormData({ ...formData, items: newItems });
+                                }
+                              }} />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 mb-4">
+                    <button
+                      onClick={() => setFormData({ ...formData, items: [...formData.items, { id: Math.random().toString(36), type: 'text', content: '' }] })}
+                      className="flex-1 py-2 rounded-lg border border-dashed border-gray-600 text-gray-400 hover:border-primary-500 hover:text-primary-500 flex items-center justify-center text-sm transition-all"
+                    >
+                      <Type size={14} className="mr-2" /> Adicionar Texto
+                    </button>
+                    <button
+                      onClick={() => setFormData({ ...formData, items: [...formData.items, { id: Math.random().toString(36), type: 'file', fileName: '' }] })}
+                      className="flex-1 py-2 rounded-lg border border-dashed border-gray-600 text-gray-400 hover:border-primary-500 hover:text-primary-500 flex items-center justify-center text-sm transition-all"
+                    >
+                      <FileText size={14} className="mr-2" /> Adicionar PDF
+                    </button>
+                  </div>
+
                 </div>
 
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Anexo (PDF)</label>
-                  <div className="flex gap-2">
-                    <label className="flex-1 bg-dark-900 border border-gray-700 rounded-lg p-3 flex items-center justify-center cursor-pointer hover:border-primary-500 transition-colors">
-                      <FileText className="text-gray-500 mr-2" />
-                      <span className="text-gray-300 text-sm truncate">{formData.fileName || "Selecionar PDF..."}</span>
-                      <input type="file" accept=".pdf" className="hidden" onChange={e => {
-                        if (e.target.files?.[0]) setFormData({ ...formData, file: e.target.files[0], fileName: e.target.files[0].name });
-                      }} />
-                    </label>
-                    {formData.fileName && <button onClick={() => setFormData({ ...formData, file: null, fileName: '' })} className="p-3 bg-red-500/20 text-red-500 rounded-lg"><X size={20} /></button>}
-                  </div>
-                </div>
-
-                <div className="pt-4">
+                <div className="pt-2">
                   <button
                     disabled={saving}
                     onClick={handleSaveSingle}
-                    className="w-full py-4 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-bold flex items-center justify-center shadow-lg shadow-primary-900/20"
+                    className="w-full py-4 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-bold flex items-center justify-center shadow-lg shadow-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {saving ? 'Salvando...' : 'Salvar Agendamento'} <Send size={18} className="ml-2" />
+                    {saving ? 'Enviando...' : `Agendar ${formData.items.length} Item(ns)`} <Send size={18} className="ml-2" />
                   </button>
                 </div>
               </div>
@@ -452,102 +569,157 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
               <div className="flex-1 flex flex-col h-full animate-fade-in">
 
                 {/* Settings Bar */}
-                <div className="flex gap-4 mb-6 bg-dark-900 p-4 rounded-xl border border-gray-700 items-end">
-                  <div className="flex-1">
+                {/* Settings Bar */}
+                <div className="flex flex-col md:flex-row gap-4 mb-6 bg-dark-900 p-4 rounded-xl border border-gray-700 md:items-end">
+                  <div className="flex-1 w-full">
                     <label className="text-xs text-gray-500 uppercase font-bold mb-1 block">Início</label>
-                    <input type="date" value={batchSettings.startDate} onChange={e => setBatchSettings({ ...batchSettings, startDate: e.target.value })} className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm" />
+                    <input type="date" value={batchSettings.startDate} onChange={e => setBatchSettings({ ...batchSettings, startDate: e.target.value })} className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm [color-scheme:dark]" />
                   </div>
-                  <div className="w-24">
-                    <label className="text-xs text-gray-500 uppercase font-bold mb-1 block">Hora Padrão</label>
-                    <input type="time" value={batchSettings.startTime} onChange={e => setBatchSettings({ ...batchSettings, startTime: e.target.value })} className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm" />
-                  </div>
-                  <div className="w-32">
-                    <label className="text-xs text-gray-500 uppercase font-bold mb-1 block">Qtd. Meses</label>
-                    <select value={batchSettings.months} onChange={e => setBatchSettings({ ...batchSettings, months: Number(e.target.value) })} className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm">
-                      <option value={2}>2 Meses</option>
-                      <option value={3}>3 Meses</option>
-                      <option value={6}>6 Meses</option>
-                      <option value={12}>12 Meses</option>
-                    </select>
+                  <div className="flex gap-4 w-full md:w-auto">
+                    <div className="flex-1 md:w-24">
+                      <label className="text-xs text-gray-500 uppercase font-bold mb-1 block">Hora Padrão</label>
+                      <input type="time" value={batchSettings.startTime} onChange={e => setBatchSettings({ ...batchSettings, startTime: e.target.value })} className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm [color-scheme:dark]" />
+                    </div>
+                    <div className="flex-1 md:w-36">
+                      <label className="text-xs text-gray-500 uppercase font-bold mb-1 block">Qtd. Meses</label>
+                      <CustomSelect
+                        value={String(batchSettings.months)}
+                        onChange={val => setBatchSettings({ ...batchSettings, months: Number(val) })}
+                        options={[
+                          { value: '2', label: '2 Meses' },
+                          { value: '3', label: '3 Meses' },
+                          { value: '6', label: '6 Meses' },
+                          { value: '12', label: '12 Meses' }
+                        ]}
+                      />
+                    </div>
                   </div>
                 </div>
 
                 {/* Draggable/Scrollable List of Drafts */}
-                <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 sm:pr-2">
                   {batchDrafts.map((draft, index) => (
-                    <div key={draft.id} className="bg-dark-900 border border-gray-700 rounded-xl p-4 flex gap-4 items-start hover:border-gray-500 transition-colors">
+                    <div key={draft.id} className="bg-dark-900 border border-gray-700 rounded-xl p-3 sm:p-4 flex gap-3 sm:gap-4 items-start hover:border-gray-500 transition-colors">
                       <div className="w-8 h-8 rounded-full bg-primary-900/30 text-primary-400 flex items-center justify-center font-bold text-sm shrink-0">
                         {index + 1}
                       </div>
-                      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Date & Type */}
-                        <div className="space-y-3">
-                          <div className="flex gap-2">
-                            <input
-                              type="date"
-                              value={draft.date}
-                              onChange={(e) => {
-                                const newDrafts = [...batchDrafts];
-                                newDrafts[index].date = e.target.value;
-                                setBatchDrafts(newDrafts);
-                              }}
-                              className="flex-1 bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm"
-                            />
-                            <input
-                              type="time"
-                              value={draft.time}
-                              onChange={(e) => {
-                                const newDrafts = [...batchDrafts];
-                                newDrafts[index].time = e.target.value;
-                                setBatchDrafts(newDrafts);
-                              }}
-                              className="w-24 bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm"
-                            />
-                          </div>
-
-                          {/* File Upload Mini */}
-                          <div className="flex items-center gap-2">
-                            <label className="flex-1 bg-dark-800 border border-gray-600 border-dashed rounded p-2 flex items-center justify-center cursor-pointer hover:bg-dark-700 hover:border-gray-500 transition-colors">
-                              <FileText size={14} className={draft.fileName ? "text-primary-400" : "text-gray-500"} />
-                              <span className="ml-2 text-xs truncate max-w-[120px] text-gray-300">
-                                {draft.fileName || "Anexar PDF"}
-                              </span>
-                              <input type="file" accept=".pdf" className="hidden" onChange={e => {
-                                if (e.target.files?.[0]) {
-                                  const newDrafts = [...batchDrafts];
-                                  newDrafts[index].file = e.target.files[0];
-                                  newDrafts[index].fileName = e.target.files[0].name;
-                                  setBatchDrafts(newDrafts);
-                                }
-                              }} />
-                            </label>
-                            {draft.fileName && (
-                              <button onClick={() => {
-                                const newDrafts = [...batchDrafts];
-                                newDrafts[index].file = null;
-                                newDrafts[index].fileName = '';
-                                setBatchDrafts(newDrafts);
-                              }} className="p-2 text-xs text-red-500 hover:bg-red-500/10 rounded"><X size={14} /></button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Message */}
-                        <div className="relative">
-                          <textarea
-                            placeholder="Mensagem para este mês..."
-                            rows={3}
-                            value={draft.message}
-                            onChange={e => {
+                      <div className="flex-1 flex flex-col gap-3">
+                        {/* Date & Time */}
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="date"
+                            value={draft.date}
+                            onChange={(e) => {
                               const newDrafts = [...batchDrafts];
-                              newDrafts[index].message = e.target.value;
+                              newDrafts[index].date = e.target.value;
                               setBatchDrafts(newDrafts);
                             }}
-                            className="w-full bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm resize-none focus:border-primary-500 outline-none"
+                            className="w-full sm:flex-1 bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm [color-scheme:dark]"
                           />
-                          <button onClick={() => generateAIMessage(index)} className="absolute bottom-2 right-2 text-xs text-primary-400 hover:text-white bg-dark-900/80 px-2 py-1 rounded backdrop-blur">
-                            <Wand2 size={10} />
-                          </button>
+                          <input
+                            type="time"
+                            value={draft.time}
+                            onChange={(e) => {
+                              const newDrafts = [...batchDrafts];
+                              newDrafts[index].time = e.target.value;
+                              setBatchDrafts(newDrafts);
+                            }}
+                            className="w-full sm:w-24 bg-dark-800 border border-gray-600 rounded p-2 text-white text-sm [color-scheme:dark]"
+                          />
+                        </div>
+
+                        {/* Items List */}
+                        <div className="space-y-2">
+                          {draft.items.map((item, itemIndex) => (
+                            <div key={item.id} className="bg-dark-800 border border-gray-700/50 rounded-lg p-2 relative group flex flex-col gap-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                                  {item.type === 'text' ? <><MessageCircle size={10} /> Mensagem</> : <><FileText size={10} /> Arquivo</>}
+                                  <span className="ml-1">#{itemIndex + 1}</span>
+                                </span>
+                                <div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    disabled={itemIndex === 0}
+                                    onClick={() => {
+                                      const newDrafts = [...batchDrafts];
+                                      const items = [...newDrafts[index].items];
+                                      [items[itemIndex - 1], items[itemIndex]] = [items[itemIndex], items[itemIndex - 1]];
+                                      newDrafts[index].items = items;
+                                      setBatchDrafts(newDrafts);
+                                    }}
+                                    className="p-1 hover:bg-gray-700 text-gray-400 hover:text-white rounded disabled:opacity-30"
+                                  ><ArrowUp size={12} /></button>
+                                  <button
+                                    disabled={itemIndex === draft.items.length - 1}
+                                    onClick={() => {
+                                      const newDrafts = [...batchDrafts];
+                                      const items = [...newDrafts[index].items];
+                                      [items[itemIndex + 1], items[itemIndex]] = [items[itemIndex], items[itemIndex + 1]];
+                                      newDrafts[index].items = items;
+                                      setBatchDrafts(newDrafts);
+                                    }}
+                                    className="p-1 hover:bg-gray-700 text-gray-400 hover:text-white rounded disabled:opacity-30"
+                                  ><ArrowDown size={12} /></button>
+                                  <button
+                                    onClick={() => {
+                                      const newDrafts = [...batchDrafts];
+                                      const items = [...newDrafts[index].items];
+                                      newDrafts[index].items = items.filter(i => i.id !== item.id);
+                                      setBatchDrafts(newDrafts);
+                                    }}
+                                    className="p-1 hover:bg-red-500/20 text-red-500 rounded ml-1"
+                                  ><X size={12} /></button>
+                                </div>
+                              </div>
+
+                              {item.type === 'text' ? (
+                                <textarea
+                                  rows={2}
+                                  value={item.content || ''}
+                                  onChange={e => {
+                                    const newDrafts = [...batchDrafts];
+                                    newDrafts[index].items[itemIndex].content = e.target.value;
+                                    setBatchDrafts(newDrafts);
+                                  }}
+                                  placeholder="Digite a mensagem..."
+                                  className="w-full bg-dark-900/50 border border-gray-700 rounded p-2 text-xs text-white resize-none focus:border-primary-500 outline-none"
+                                />
+                              ) : (
+                                <label className="flex items-center gap-2 bg-dark-900/50 border border-gray-700 border-dashed rounded p-2 cursor-pointer hover:border-primary-500 transition-colors">
+                                  <FileText size={14} className="text-gray-400" />
+                                  <span className="text-xs text-gray-300 truncate flex-1">{item.fileName || "Selecionar PDF"}</span>
+                                  <input type="file" accept=".pdf" className="hidden" onChange={e => {
+                                    if (e.target.files?.[0]) {
+                                      const newDrafts = [...batchDrafts];
+                                      newDrafts[index].items[itemIndex].file = e.target.files[0];
+                                      newDrafts[index].items[itemIndex].fileName = e.target.files[0].name;
+                                      setBatchDrafts(newDrafts);
+                                    }
+                                  }} />
+                                </label>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Add Buttons */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              const newDrafts = [...batchDrafts];
+                              newDrafts[index].items.push({ id: Math.random().toString(36), type: 'text', content: '' });
+                              setBatchDrafts(newDrafts);
+                            }}
+                            className="flex-1 py-1.5 rounded border border-dashed border-gray-600 text-xs text-gray-400 hover:border-primary-500 hover:text-primary-500"
+                          >+ Texto</button>
+                          <button
+                            onClick={() => {
+                              const newDrafts = [...batchDrafts];
+                              newDrafts[index].items.push({ id: Math.random().toString(36), type: 'file', fileName: '' });
+                              setBatchDrafts(newDrafts);
+                            }}
+                            className="flex-1 py-1.5 rounded border border-dashed border-gray-600 text-xs text-gray-400 hover:border-primary-500 hover:text-primary-500"
+                          >+ PDF</button>
                         </div>
                       </div>
                     </div>
@@ -570,6 +742,6 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ client, onClose, o
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 };

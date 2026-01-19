@@ -9,11 +9,19 @@ export interface Client {
   email: string;
   start_date: string; // DB column: start_date
   end_date: string;   // DB column: end_date
-  plan_type: 'Monthly' | 'Quarterly' | 'Semi-Annual' | 'Annual'; // DB: plan_type
+  plan_type: 'Monthly' | 'Quarterly' | 'Semi-Annual' | 'Annual' | 'Custom'; // DB: plan_type
   amount: number;
   status: ClientStatus;
   avatar_url?: string;
   notes?: string;
+  service_type?: string; // New field
+  ai_enabled?: boolean; // AI Module
+  ai_mode?: 'standard' | 'strict' | 'friendly'; // AI Module
+}
+
+export interface ServiceType {
+  id: string;
+  name: string;
 }
 
 export interface ScheduleItem {
@@ -38,6 +46,7 @@ export interface FeedbackQuestion {
   id: string;
   text: string;
   order: number;
+  category?: string; // New field
 }
 
 export interface FeedbackSubmission {

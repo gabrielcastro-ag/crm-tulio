@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Client, FeedbackQuestion, FeedbackSubmission, ServiceType } from '../types';
 import { supabase } from '../services/supabase';
 import { sendMessage } from '../services/whatsapp';
-import { Plus, Trash2, Save, MessageSquare, CheckCircle2, ChevronDown, ChevronUp, Send, FileEdit, History, Settings, Loader2, Bot, CalendarClock, Power, User, Users } from 'lucide-react';
+import { Plus, Trash2, Save, MessageSquare, CheckCircle2, ChevronDown, ChevronUp, ChevronRight, Send, FileEdit, History, Settings, Loader2, Bot, CalendarClock, Power, User, Users, X, ArrowLeft } from 'lucide-react';
 import { CustomSelect } from './CustomSelect';
 
 interface FeedbackManagerProps {
@@ -18,7 +18,63 @@ interface FeedbackSchedule {
   next_run_at: string;
   active: boolean;
   questions: FeedbackQuestion[];
+  clients: { name: string; service_type: string | null } | null;
 }
+
+// Helper Component for Folders
+const QuestionFolder = ({ title, questions, onDelete, onAdd }: { title: string, questions: FeedbackQuestion[], onDelete: (id: string) => void, onAdd: (text: string) => void }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [newText, setNewText] = useState('');
+
+  const handleAdd = () => {
+    if (newText.trim()) {
+      onAdd(newText);
+      setNewText('');
+    }
+  };
+
+  return (
+    <div className="bg-dark-900 border border-gray-700 rounded-xl overflow-hidden mb-4">
+      <div
+        className="p-4 bg-dark-800 flex items-center justify-between cursor-pointer hover:bg-dark-700/50 transition-colors"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <h4 className="font-bold text-white flex items-center gap-2">
+          {title === 'Geral' ? <Settings size={18} className="text-primary-500" /> : <Bot size={18} className="text-secondary-500" />}
+          {title}
+          <span className="bg-dark-900 border border-gray-700 text-xs px-2 py-0.5 rounded-full text-gray-400 font-normal">{questions.length}</span>
+        </h4>
+        {isOpen ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+      </div>
+
+      {isOpen && (
+        <div className="p-4 border-t border-gray-700 animate-fade-in">
+          <div className="space-y-3 mb-4">
+            {questions.length === 0 && <p className="text-gray-500 text-sm italic py-2">Nenhuma pergunta nesta categoria.</p>}
+            {questions.map((q, idx) => (
+              <div key={q.id} className="flex items-center justify-between bg-dark-800 p-3 rounded-lg border border-gray-700/50">
+                <span className="text-gray-300 text-sm flex-1">{idx + 1}. {q.text}</span>
+                <button onClick={() => onDelete(q.id)} className="text-gray-500 hover:text-red-400 p-1"><Trash2 size={16} /></button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newText}
+              onChange={(e) => setNewText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+              placeholder={`Nova pergunta para ${title}...`}
+              className="flex-1 bg-dark-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+            <button onClick={handleAdd} className="bg-primary-600 hover:bg-primary-500 text-white px-4 rounded-lg text-sm font-bold transition-colors">Add</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => {
   const [activeTab, setActiveTab] = useState<'register' | 'history' | 'config' | 'automation'>('register');
@@ -47,8 +103,7 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
   const [selectedServiceTypeForBulk, setSelectedServiceTypeForBulk] = useState('');
   const [newQuestionText, setNewQuestionText] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
-  const [feedbackDate, setFeedbackDate] = useState(new Date().toISOString().split('T')[0]);
-  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
+
 
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
 
@@ -58,6 +113,24 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
 
   // Automation: Global Question Selector
   const [globalQuestionToAdd, setGlobalQuestionToAdd] = useState('');
+
+  // History Folder State
+  const [selectedHistoryClient, setSelectedHistoryClient] = useState<string | null>(null);
+
+  // Grouped Submissions for History Folder View
+  const groupedSubmissions = React.useMemo(() => {
+    const groups: Record<string, FeedbackSubmission[]> = {};
+    submissions.forEach(sub => {
+      if (!sub.client_id) return;
+      if (!groups[sub.client_id]) groups[sub.client_id] = [];
+      groups[sub.client_id].push(sub);
+    });
+    return groups;
+  }, [submissions]);
+
+  // View Questions Modal
+  const [viewQuestionsModal, setViewQuestionsModal] = useState(false);
+  const [questionsToView, setQuestionsToView] = useState<{ title: string; list: FeedbackQuestion[] } | null>(null);
 
   // --- Initial Data Fetch ---
   useEffect(() => {
@@ -95,9 +168,17 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
   };
 
   const fetchSchedules = async () => {
-    const { data } = await supabase.from('feedback_schedules').select('*').order('created_at', { ascending: false });
-    if (data) setSchedules(data as FeedbackSchedule[]);
+    const { data } = await supabase
+      .from('feedback_schedules')
+      .select('*, clients(name, service_type)')
+      .order('created_at', { ascending: false });
+    if (data) setSchedules(data as any);
   };
+
+  // ... (rest of the file) ...
+
+  // UI Rendering part (Scanning for the list rendering to replace)
+
 
   const fetchServiceTypes = async () => {
     const { data } = await supabase.from('service_types').select('*').order('name');
@@ -106,17 +187,16 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
 
   // --- Handlers ---
 
-  const handleAddQuestion = async () => {
-    if (!newQuestionText.trim()) return;
+  const handleAddQuestion = async (text: string, category: string = 'Geral') => {
+    if (!text.trim()) return;
     const newOrder = questions.length;
     const { data, error } = await supabase
       .from('feedback_questions')
-      .insert([{ text: newQuestionText, order: newOrder }])
+      .insert([{ text, order: newOrder, category }])
       .select();
 
     if (data) {
       setQuestions([...questions, data[0] as FeedbackQuestion]);
-      setNewQuestionText('');
     }
   };
 
@@ -125,36 +205,7 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
     setQuestions(questions.filter(q => q.id !== id));
   };
 
-  const handleSaveManualFeedback = async () => {
-    if (!selectedClientId) {
-      alert("Selecione um aluno.");
-      return;
-    }
 
-    const answersArray = questions.map(q => ({
-      question: q.text,
-      answer: inputAnswers[q.id] || 'Não informado'
-    }));
-
-    setLoading(true);
-    const { error } = await supabase.from('feedback_submissions').insert([{
-      client_id: selectedClientId,
-      created_at: new Date(feedbackDate).toISOString(),
-      answers: answersArray, // Supabase handles JSONB
-      status: 'reviewed'
-    }]);
-
-    setLoading(false);
-
-    if (!error) {
-      alert("Feedback salvo com sucesso!");
-      setInputAnswers({});
-      fetchSubmissions(); // Refresh history
-      setActiveTab('history');
-    } else {
-      alert("Erro ao salvar.");
-    }
-  };
 
   const handleOpenWhatsAppModal = () => {
     if (registerMode === 'individual' && !selectedClientId) {
@@ -174,89 +225,99 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
       return;
     }
 
-    // Construct Message
-    let messageBody = ``;
-    selectedQuestionsToSend.forEach((qText) => {
-      messageBody += `${qText}\n`;
-    });
+    // Prepare Questions Snapshot
+    // We filter the full 'questions' object based on selected text to get IDs and Order correct if needed
+    // Or just save the text as the snapshot since that's what matters for the form
+    const questionsSnapshot = questions.filter(q => selectedQuestionsToSend.includes(q.text));
 
-    // MODE: INDIVIDUAL (Direct API)
-    if (registerMode === 'individual') {
-      const client = clients.find(c => c.id === selectedClientId);
-      if (!client) return;
+    setLoading(true);
 
-      setLoading(true);
+    try {
+      // Helper to process one client
+      const processClient = async (client: Client) => {
+        // 1. Create Submission Record (Pending)
+        const { data: sub, error } = await supabase.from('feedback_submissions').insert([{
+          client_id: client.id,
+          created_at: new Date().toISOString(),
+          status: 'pending',
+          answers: null, // Explicitly null as they haven't answered
+          questions_snapshot: questionsSnapshot
+        }]).select().single();
 
-      const fullMessage = messageBody;
+        if (error || !sub) throw new Error('Failed to create submission');
 
-      // Send immediately via Client-side service
-      const response = await sendMessage({
-        phone: client.phone,
-        message: fullMessage
-      });
+        // 2. Generate Link
+        const link = `${window.location.origin}/feedback/${sub.id}`;
+        const message = `Olá ${client.name.split(' ')[0]}! 👋\n\nChegou a hora do seu check-in de acompanhamento.\nPor favor, responda as perguntas no link abaixo:\n\n🔗 ${link}\n\nAguardo seu retorno! 🚀`;
 
-      setLoading(false);
-      setShowQuestionSelector(false);
+        // 3. Send WhatsApp
+        return await sendMessage({
+          phone: client.phone,
+          message: message
+        });
+      };
 
-      if (response.success) {
-        alert(response.method === 'link' ? "Abrindo WhatsApp..." : "Mensagem enviada com sucesso!");
-        if (response.method === 'link' && response.url) {
-          window.open(response.url, '_blank');
+      // MODE: INDIVIDUAL
+      if (registerMode === 'individual') {
+        const client = clients.find(c => c.id === selectedClientId);
+        if (!client) return;
+
+        const response = await processClient(client);
+
+        if (response.success) {
+          alert("Link de feedback enviado com sucesso!");
+          setShowQuestionSelector(false);
+        } else {
+          console.error(response.error);
+          alert("Erro ao enviar mensagem.");
         }
-      } else {
-        console.error(response.error);
-        alert("Erro ao enviar mensagem. Verifique a configuração da API.");
+
       }
-    }
-    // MODE: BULK (Loop calling API)
-    else {
-      if (!window.confirm(`Tem certeza que deseja enviar para TODOS os alunos de "${selectedServiceTypeForBulk}"? ISSO SERÁ FEITO AGORA.`)) return;
-
-      setLoading(true);
-
-      // 1. Fetch targeted clients
-      const { data: targetClients } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('service_type', selectedServiceTypeForBulk)
-        .in('status', ['active', 'expiring']);
-
-      if (!targetClients || targetClients.length === 0) {
-        alert("Nenhum aluno ativo encontrado para este serviço.");
-        setLoading(false);
-        return;
-      }
-
-      // 2. Loop and send directly (Frontend Loop)
-      let successCount = 0;
-      let failCount = 0;
-
-      for (const client of targetClients) {
-        if (!client.phone) continue;
-
-        const fullMessage = messageBody;
-
-        try {
-          // Short delay to avoid rate limit spam
-          await new Promise(r => setTimeout(r, 1000));
-
-          const res = await sendMessage({
-            phone: client.phone,
-            message: fullMessage
-          });
-
-          if (res.success) successCount++;
-          else failCount++;
-
-        } catch (err) {
-          console.error(`Failed to send to ${client.name}`, err);
-          failCount++;
+      // MODE: BULK
+      else {
+        if (!window.confirm(`Tem certeza que deseja enviar o LINK para TODOS os alunos de "${selectedServiceTypeForBulk}"?`)) {
+          setLoading(false);
+          return;
         }
+
+        const { data: targetClients } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('service_type', selectedServiceTypeForBulk)
+          .in('status', ['active', 'expiring']);
+
+        if (!targetClients || targetClients.length === 0) {
+          alert("Nenhum aluno ativo encontrado.");
+          setLoading(false);
+          return;
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const client of targetClients) {
+          if (!client.phone) continue;
+          try {
+            const res = await processClient(client);
+            if (res.success) successCount++;
+            else failCount++;
+            // Rate limit
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (e) {
+            console.error(e);
+            failCount++;
+          }
+        }
+
+        alert(`Finalizado!\nEnviados: ${successCount}\nFalhas: ${failCount}`);
+        setShowQuestionSelector(false);
       }
 
+    } catch (err) {
+      console.error(err);
+      alert("Erro no processo de envio.");
+    } finally {
       setLoading(false);
-      setShowQuestionSelector(false);
-      alert(`Processo finalizado!\nEnviados: ${successCount}\nFalhas: ${failCount}`);
     }
   };
 
@@ -347,6 +408,25 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
     }
   };
 
+  // Delete Submission
+  const handleDeleteSubmission = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent toggling the card
+    if (!window.confirm("Tem certeza que deseja excluir este feedback permanentemente?")) return;
+
+    setLoading(true);
+    const { error } = await supabase.from('feedback_submissions').delete().eq('id', id);
+    setLoading(false);
+
+    if (error) {
+      alert("Erro ao excluir.");
+      console.error(error);
+    } else {
+      setSubmissions(submissions.filter(s => s.id !== id));
+      // If closing the last submission of a client, go back to list?
+      // Not strictly necessary as the filter will just show empty list which is fine
+    }
+  };
+
   return (
     <div className="animate-fade-in max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
@@ -361,7 +441,7 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
             onClick={() => setActiveTab('register')}
             className={`px-4 lg:px-6 py-2 rounded-lg font-medium transition-all flex items-center whitespace-nowrap ${activeTab === 'register' ? 'bg-primary-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
           >
-            <FileEdit size={18} className="mr-2" /> Registrar
+            <Send size={18} className="mr-2" /> Solicitar
           </button>
           <button
             onClick={() => setActiveTab('history')}
@@ -384,118 +464,76 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
         </div>
       </div>
 
-      {/* --- TAB: MANUAL REGISTER --- */}
+      {/* --- TAB: MANUAL REGISTER (NOW SEND REQUEST) --- */}
       {activeTab === 'register' && (
-        <div className="bg-dark-800 rounded-2xl border border-gray-700 p-6 lg:p-8 shadow-xl">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Sidebar controls */}
-            <div className="lg:col-span-1 space-y-6">
+        <div className="bg-dark-800 rounded-2xl border border-gray-700 p-8 shadow-xl max-w-2xl mx-auto">
+          <div className="text-center mb-8">
+            <h3 className="text-xl font-bold text-white mb-2">Solicitar Feedback</h3>
+            <p className="text-gray-400 text-sm">Envie o link de check-in para seus alunos via WhatsApp.</p>
+          </div>
 
-              {/* Toggle Mode */}
-              <div className="flex bg-dark-900 p-1 rounded-lg">
-                <button
-                  onClick={() => setRegisterMode('individual')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${registerMode === 'individual' ? 'bg-primary-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  Individual
-                </button>
-                <button
-                  onClick={() => setRegisterMode('bulk')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${registerMode === 'bulk' ? 'bg-primary-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  Em Massa
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-400 mb-2">
-                  {registerMode === 'individual' ? 'Selecione o Aluno' : 'Selecione o Serviço'}
-                </label>
-
-                {registerMode === 'individual' ? (
-                  <CustomSelect
-                    value={selectedClientId}
-                    onChange={(val) => setSelectedClientId(val)}
-                    options={[
-                      { value: '', label: '-- Selecione --' },
-                      ...clients.map(c => ({ value: c.id, label: c.name }))
-                    ]}
-                    placeholder="-- Selecione --"
-                  />
-                ) : (
-                  <CustomSelect
-                    value={selectedServiceTypeForBulk}
-                    onChange={(val) => setSelectedServiceTypeForBulk(val)}
-                    options={[
-                      { value: '', label: '-- Selecione --' },
-                      ...serviceTypes.map(s => ({ value: s.name, label: s.name }))
-                    ]}
-                    placeholder="-- Selecione --"
-                  />
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-400 mb-2">Data do Feedback</label>
-                <input
-                  type="date"
-                  value={feedbackDate}
-                  onChange={(e) => setFeedbackDate(e.target.value)}
-                  className="w-full bg-dark-900 border border-gray-700 rounded-xl p-3 text-white focus:ring-2 focus:ring-primary-500 outline-none"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-gray-700">
-                <p className="text-xs text-gray-500 mb-3">Ações Rápidas</p>
-                <button
-                  onClick={handleOpenWhatsAppModal}
-                  disabled={registerMode === 'individual' ? !selectedClientId : !selectedServiceTypeForBulk}
-                  className={`w-full py-3 rounded-xl font-bold flex items-center justify-center transition-all ${(registerMode === 'individual' ? !selectedClientId : !selectedServiceTypeForBulk)
-                    ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                    : 'bg-[#25D366] text-white hover:bg-[#20bd5a]'
-                    }`}
-                >
-                  <Send size={18} className="mr-2" />
-                  {registerMode === 'individual' ? 'Enviar Perguntas' : 'Enviar Perguntas em Massa'}
-                </button>
-                <p className="text-xs text-gray-500 mt-2 text-center">Abre o WhatsApp com as perguntas configuradas.</p>
-              </div>
+          <div className="space-y-6">
+            {/* Toggle Mode */}
+            <div className="flex bg-dark-900 p-1 rounded-lg">
+              <button
+                onClick={() => setRegisterMode('individual')}
+                className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${registerMode === 'individual' ? 'bg-primary-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                Individual
+              </button>
+              <button
+                onClick={() => setRegisterMode('bulk')}
+                className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${registerMode === 'bulk' ? 'bg-primary-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                Em Massa
+              </button>
             </div>
 
-            {/* Form Inputs */}
-            <div className="lg:col-span-2 bg-dark-900 rounded-xl p-6 border border-gray-700">
-              <h3 className="text-xl font-bold text-white mb-6 flex items-center">
-                <FileEdit className="mr-2 text-primary-500" /> Preencher Respostas
-              </h3>
+            {/* Selectors */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                {registerMode === 'individual' ? 'Selecione o Aluno' : 'Selecione o Serviço'}
+              </label>
 
-              {questions.length === 0 ? (
-                <div className="text-center text-gray-500 py-10">Configure as perguntas na aba "Configuração" primeiro.</div>
+              {registerMode === 'individual' ? (
+                <CustomSelect
+                  value={selectedClientId}
+                  onChange={(val) => setSelectedClientId(val)}
+                  options={[
+                    { value: '', label: '-- Selecione --' },
+                    ...clients.map(c => ({ value: c.id, label: c.name }))
+                  ]}
+                  placeholder="-- Selecione --"
+                />
               ) : (
-                <div className="space-y-6">
-                  {questions.map((q, idx) => (
-                    <div key={q.id}>
-                      <label className="block text-sm font-semibold text-primary-400 mb-2">{idx + 1}. {q.text}</label>
-                      <textarea
-                        rows={2}
-                        placeholder="Digite a resposta do aluno..."
-                        value={inputAnswers[q.id] || ''}
-                        onChange={(e) => setInputAnswers({ ...inputAnswers, [q.id]: e.target.value })}
-                        className="w-full bg-dark-800 border border-gray-700 rounded-lg p-3 text-white focus:ring-1 focus:ring-primary-500 outline-none resize-y"
-                      />
-                    </div>
-                  ))}
-
-                  <div className="pt-4 flex justify-end">
-                    <button
-                      onClick={handleSaveManualFeedback}
-                      disabled={loading}
-                      className="bg-primary-600 hover:bg-primary-500 text-white px-8 py-3 rounded-xl font-bold flex items-center shadow-lg shadow-primary-900/20 transition-all"
-                    >
-                      {loading ? 'Salvando...' : <><Save size={20} className="mr-2" /> Salvar na Pasta</>}
-                    </button>
-                  </div>
-                </div>
+                <CustomSelect
+                  value={selectedServiceTypeForBulk}
+                  onChange={(val) => setSelectedServiceTypeForBulk(val)}
+                  options={[
+                    { value: '', label: '-- Selecione --' },
+                    ...serviceTypes.map(s => ({ value: s.name, label: s.name }))
+                  ]}
+                  placeholder="-- Selecione --"
+                />
               )}
+            </div>
+
+            {/* Send Button */}
+            <div className="pt-4 border-t border-gray-700">
+              <button
+                onClick={handleOpenWhatsAppModal}
+                disabled={loading ? true : (registerMode === 'individual' ? !selectedClientId : !selectedServiceTypeForBulk)}
+                className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center transition-all shadow-lg ${(registerMode === 'individual' ? !selectedClientId : !selectedServiceTypeForBulk)
+                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  : 'bg-[#25D366] text-white hover:bg-[#20bd5a] hover:scale-[1.02]'
+                  }`}
+              >
+                <Send size={24} className="mr-3" />
+                {registerMode === 'individual' ? 'Enviar Perguntas' : 'Enviar em Massa'}
+              </button>
+              <p className="text-xs text-gray-500 mt-3 text-center">
+                Você poderá selecionar as perguntas no próximo passo.
+              </p>
             </div>
           </div>
         </div>
@@ -506,43 +544,32 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
         <div className="bg-dark-800 rounded-2xl border border-gray-700 p-8 shadow-xl">
           <div className="max-w-3xl mx-auto">
             <div className="mb-8 text-center">
-              <h3 className="text-xl font-bold text-white mb-2">Modelo de Check-in</h3>
-              <p className="text-gray-400 text-sm">Defina as perguntas padrão que serão enviadas e respondidas semanalmente.</p>
+              <h3 className="text-xl font-bold text-white mb-2">Perguntas de Check-in</h3>
+              <p className="text-gray-400 text-sm">Organize as perguntas por categoria (ex: Serviços ou Geral).</p>
             </div>
 
-            <div className="space-y-4 mb-8">
-              {questions.map((q, index) => (
-                <div key={q.id} className="flex items-center bg-dark-900 border border-gray-700 p-4 rounded-xl group hover:border-primary-500/50 transition-colors">
-                  <div className="w-8 h-8 rounded-full bg-primary-500/20 text-primary-400 flex items-center justify-center font-bold mr-4 text-sm">
-                    {index + 1}
-                  </div>
-                  <span className="flex-1 text-gray-200">{q.text}</span>
-                  <button
-                    onClick={() => handleDeleteQuestion(q.id)}
-                    className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
+            {/* Folders List */}
+            <div className="space-y-6">
+              {/* 1. GERAL (Default) */}
+              <QuestionFolder
+                title="Geral"
+                questions={questions.filter(q => !q.category || q.category === 'Geral')}
+                onDelete={handleDeleteQuestion}
+                onAdd={(text) => handleAddQuestion(text, 'Geral')}
+              />
+
+              {/* 2. Service Types */}
+              {serviceTypes.map(st => (
+                <QuestionFolder
+                  key={st.id}
+                  title={st.name}
+                  questions={questions.filter(q => q.category === st.name)}
+                  onDelete={handleDeleteQuestion}
+                  onAdd={(text) => handleAddQuestion(text, st.name)}
+                />
               ))}
             </div>
 
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={newQuestionText}
-                onChange={(e) => setNewQuestionText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddQuestion()}
-                placeholder="Digite uma nova pergunta..."
-                className="flex-1 bg-dark-900 border border-gray-700 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-primary-500 outline-none"
-              />
-              <button
-                onClick={handleAddQuestion}
-                className="bg-primary-600 hover:bg-primary-500 text-white px-6 rounded-xl font-bold flex items-center transition-colors"
-              >
-                <Plus size={20} className="mr-2" /> Adicionar
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -550,66 +577,128 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
       {/* --- TAB: HISTORY --- */}
       {activeTab === 'history' && (
         <div className="space-y-4">
-          {submissions.map((sub) => (
-            <div key={sub.id} className="bg-dark-800 rounded-2xl border border-gray-700 overflow-hidden transition-all duration-300">
-              <div
-                className="p-6 flex flex-col md:flex-row items-center justify-between cursor-pointer hover:bg-dark-700/50 transition-colors"
-                onClick={() => setExpandedSubmission(expandedSubmission === sub.id ? null : sub.id)}
-              >
-                <div className="flex items-center space-x-4 w-full md:w-auto mb-4 md:mb-0">
-                  <img
-                    src={sub.clients?.avatar_url || `https://ui-avatars.com/api/?name=${sub.clients?.name || 'User'}`}
-                    alt={sub.clients?.name}
-                    className="w-12 h-12 rounded-full ring-2 ring-gray-700"
-                  />
-                  <div>
-                    <h4 className="font-bold text-white text-lg flex items-center">
-                      {sub.clients?.name || 'Cliente Removido'}
-                    </h4>
-                    <p className="text-gray-500 text-sm">Registrado em: {new Date(sub.created_at).toLocaleDateString()}</p>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <span className="text-xs bg-green-500/10 text-green-400 px-3 py-1 rounded-full border border-green-500/20">
-                    Revisado
-                  </span>
-                  <div className="text-gray-500">
-                    {expandedSubmission === sub.id ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
-                  </div>
-                </div>
-              </div>
-
-              {/* Expanded Content */}
-              {expandedSubmission === sub.id && (
-                <div className="px-6 pb-6 pt-2 bg-dark-900/30 border-t border-gray-700">
-                  <div className="space-y-4 mt-4">
-                    {sub.answers.map((ans, idx) => (
-                      <div key={idx} className="bg-dark-900 p-4 rounded-xl border border-gray-700/50">
-                        <p className="text-primary-400 text-xs font-bold mb-1 uppercase tracking-wider">{ans.question}</p>
-                        <p className="text-gray-200 mt-1 whitespace-pre-wrap">{ans.answer}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-6 flex justify-end border-t border-gray-800 pt-6">
-                    <a
-                      href={`https://wa.me/${sub.clients?.phone.replace(/\D/g, '')}?text=Fala ${sub.clients?.name.split(' ')[0]}! Analisei seu feedback. Segue o plano...`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center transition-colors"
-                    >
-                      <MessageSquare size={20} className="mr-2" /> Dar Feedback (Zap)
-                    </a>
-                  </div>
+          {/* FOLDER VIEW: List Clients */}
+          {!selectedHistoryClient && (
+            <div className="space-y-4">
+              {Object.values(groupedSubmissions).length === 0 && (
+                <div className="text-center py-20 bg-dark-800 rounded-2xl border border-dashed border-gray-700 text-gray-500">
+                  Nenhum histórico encontrado.
                 </div>
               )}
-            </div>
-          ))}
 
-          {submissions.length === 0 && (
-            <div className="text-center py-20 bg-dark-800 rounded-2xl border border-dashed border-gray-700 text-gray-500">
-              Nenhum histórico encontrado.
+              {Object.values(groupedSubmissions)
+                .sort((a, b) => new Date(b[0].created_at).getTime() - new Date(a[0].created_at).getTime()) // Sort by most recent submission
+                .map((group: FeedbackSubmission[]) => {
+                  const latestSub = group[0];
+                  const client = latestSub.clients;
+                  return (
+                    <div
+                      key={latestSub.client_id}
+                      onClick={() => setSelectedHistoryClient(latestSub.client_id!)}
+                      className="bg-dark-800 rounded-2xl border border-gray-700 p-6 flex items-center justify-between cursor-pointer hover:border-primary-500/50 hover:bg-dark-700/50 transition-all group"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <img
+                          src={client?.avatar_url || `https://ui-avatars.com/api/?name=${client?.name || 'User'}`}
+                          alt={client?.name}
+                          className="w-14 h-14 rounded-full ring-2 ring-gray-700 group-hover:ring-primary-500/50 transition-all"
+                        />
+                        <div>
+                          <h4 className="font-bold text-white text-lg flex items-center gap-2">
+                            {client?.name || 'Cliente Removido'}
+                            <span className="bg-dark-900 text-xs px-2 py-0.5 rounded text-gray-400 border border-gray-700">{group.length} feedbacks</span>
+                          </h4>
+                          <p className="text-primary-400 text-sm flex items-center mt-1">
+                            Último registro em: {new Date(latestSub.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="text-gray-600 group-hover:text-primary-500 transition-colors" />
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* DETAIL VIEW: Specific Client Feedbacks */}
+          {selectedHistoryClient && (
+            <div className="animate-fade-in">
+              <button
+                onClick={() => setSelectedHistoryClient(null)}
+                className="mb-4 flex items-center text-gray-400 hover:text-white transition-colors text-sm font-bold"
+              >
+                <ArrowLeft size={16} className="mr-1" /> Voltar para Pastas
+              </button>
+
+              <div className="space-y-4">
+                {submissions.filter(s => s.client_id === selectedHistoryClient).map((sub) => (
+                  <div key={sub.id} className="bg-dark-800 rounded-2xl border border-gray-700 overflow-hidden transition-all duration-300">
+                    <div
+                      className="p-5 md:p-6 flex flex-col md:flex-row items-start md:items-center justify-between cursor-pointer hover:bg-dark-700/50 transition-colors gap-4"
+                      onClick={() => setExpandedSubmission(expandedSubmission === sub.id ? null : sub.id)}
+                    >
+                      <div className="w-full md:w-auto">
+                        <p className="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Data do Registro</p>
+                        <h4 className="font-bold text-white text-lg flex items-center">
+                          {new Date(sub.created_at).toLocaleDateString()}
+                          <span className="text-gray-500 text-sm font-normal ml-2">
+                            às {new Date(sub.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center justify-between w-full md:w-auto gap-4 border-t border-gray-700/50 pt-3 md:border-t-0 md:pt-0">
+                        {/* Badge */}
+                        <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${sub.status === 'reviewed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>
+                          {sub.status === 'reviewed' ? 'Revisado' : 'Pendente'}
+                        </span>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => handleDeleteSubmission(sub.id, e)}
+                            className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors z-10"
+                            title="Excluir Feedback"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                          <div className="text-gray-500 p-1">
+                            {expandedSubmission === sub.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded Content */}
+                    {expandedSubmission === sub.id && (
+                      <div className="px-6 pb-6 pt-2 bg-dark-900/30 border-t border-gray-700">
+                        <div className="space-y-4 mt-4">
+                          {!sub.answers && <p className="text-gray-500 italic">Cliente ainda não respondeu.</p>}
+
+                          {sub.answers?.map((ans, idx) => (
+                            <div key={idx} className="bg-dark-900 p-4 rounded-xl border border-gray-700/50">
+                              <p className="text-primary-400 text-xs font-bold mb-1 uppercase tracking-wider">{ans.question}</p>
+                              <p className="text-gray-200 mt-1 whitespace-pre-wrap">{ans.answer}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-6 flex justify-end border-t border-gray-800 pt-6">
+                          <a
+                            href={`https://wa.me/${sub.clients?.phone.replace(/\D/g, '')}?text=Fala ${sub.clients?.name.split(' ')[0]}! Analisei seu feedback de ${new Date(sub.created_at).toLocaleDateString()}. Segue o plano...`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center transition-colors"
+                          >
+                            <MessageSquare size={20} className="mr-2" /> Dar Feedback (Zap)
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -748,37 +837,73 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
               </div>
             ) : (
               schedules.map(schedule => (
-                <div key={schedule.id} className="bg-dark-800 rounded-xl border border-gray-700 p-5 flex items-center justify-between group hover:border-gray-500 transition-all">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${schedule.active ? 'bg-primary-500/20 text-primary-400' : 'bg-gray-700/50 text-gray-500'}`}>
-                      <Bot size={20} />
-                    </div>
-                    <div>
-                      <h4 className={`font-bold text-lg ${schedule.active ? 'text-white' : 'text-gray-500'}`}>{schedule.name}</h4>
-                      <div className="flex gap-2 text-sm text-gray-400 mt-1">
-                        {schedule.service_type && <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1"><Users size={12} /> {schedule.service_type}</span>}
-                        {schedule.client_id && <span className="bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded border border-blue-800 flex items-center gap-1"><User size={12} /> Aluno VIP</span>}
-                        <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1"><CalendarClock size={12} /> {schedule.frequency_days} dias</span>
-                        <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1 text-xs">{schedule.questions?.length || 0} perguntas</span>
+                <div key={schedule.id} className="bg-dark-800 rounded-xl border border-gray-700 p-5 group hover:border-gray-500 transition-all">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${schedule.active ? 'bg-primary-500/20 text-primary-400' : 'bg-gray-700/50 text-gray-500'}`}>
+                        <Bot size={20} />
+                      </div>
+                      <div>
+                        {/* Title Row */}
+                        <h4 className={`font-bold text-lg ${schedule.active ? 'text-white' : 'text-gray-500'}`}>{schedule.name}</h4>
+
+                        {/* Details Row */}
+                        <div className="flex flex-wrap gap-2 text-sm text-gray-400 mt-2">
+                          {/* Target Badge */}
+                          {schedule.service_type && (
+                            <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1">
+                              <Users size={12} className="text-primary-500" />
+                              {schedule.service_type}
+                            </span>
+                          )}
+                          {schedule.client_id && (
+                            <span className="bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded border border-blue-800 flex items-center gap-1">
+                              <User size={12} />
+                              {schedule.clients?.name}
+                              {schedule.clients?.service_type && <span className="text-blue-200/50 text-[10px] ml-1">({schedule.clients.service_type})</span>}
+                            </span>
+                          )}
+
+                          {/* Frequency */}
+                          <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1">
+                            <CalendarClock size={12} /> {schedule.frequency_days} dias
+                          </span>
+
+                          {/* Questions Count (Clickable) */}
+                          <button
+                            onClick={() => {
+                              setQuestionsToView({ title: schedule.name, list: schedule.questions });
+                              setViewQuestionsModal(true);
+                            }}
+                            className="bg-dark-900 hover:bg-dark-700 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1 text-xs cursor-pointer transition-colors"
+                          >
+                            <FileEdit size={12} /> {schedule.questions?.length || 0} perguntas
+                          </button>
+
+                          {/* Next Run */}
+                          <span className="bg-dark-900 px-2 py-0.5 rounded border border-gray-700 flex items-center gap-1 text-green-400/80">
+                            Próximo: {new Date(schedule.next_run_at).toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => toggleSchedule(schedule.id, schedule.active)}
-                      className={`p-2 rounded-lg transition-colors ${schedule.active ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-500 hover:text-white'}`}
-                      title={schedule.active ? "Desativar" : "Ativar"}
-                    >
-                      <Power size={20} />
-                    </button>
-                    <button
-                      onClick={() => deleteSchedule(schedule.id)}
-                      className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                      title="Excluir"
-                    >
-                      <Trash2 size={20} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => toggleSchedule(schedule.id, schedule.active)}
+                        className={`p-2 rounded-lg transition-colors ${schedule.active ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-500 hover:text-white'}`}
+                        title={schedule.active ? "Desativar" : "Ativar"}
+                      >
+                        <Power size={20} />
+                      </button>
+                      <button
+                        onClick={() => deleteSchedule(schedule.id)}
+                        className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                        title="Excluir"
+                      >
+                        <Trash2 size={20} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))
@@ -787,6 +912,46 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
 
         </div>
       )}
+
+      {/* --- VIEW QUESTIONS MODAL --- */}
+      {viewQuestionsModal && questionsToView && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setViewQuestionsModal(false)}>
+          <div className="bg-dark-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-700 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold text-white mb-1">Perguntas da Regra</h3>
+                <p className="text-gray-400 text-sm">{questionsToView.title}</p>
+              </div>
+              <button onClick={() => setViewQuestionsModal(false)} className="text-gray-500 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto space-y-3">
+              {questionsToView.list && questionsToView.list.length > 0 ? (
+                questionsToView.list.map((q, idx) => (
+                  <div key={idx} className="flex gap-3 bg-dark-900 p-3 rounded-xl border border-gray-700/50">
+                    <span className="w-6 h-6 rounded-full bg-primary-500/10 text-primary-400 flex items-center justify-center text-xs font-bold shrink-0">
+                      {idx + 1}
+                    </span>
+                    <p className="text-gray-200 text-sm">{q.text}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-gray-500 text-center italic">Nenhuma pergunta configurada.</p>
+              )}
+            </div>
+            <div className="p-4 bg-dark-900/50 border-t border-gray-700 flex justify-end">
+              <button
+                onClick={() => setViewQuestionsModal(false)}
+                className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- QUESTION SELECTOR MODAL --- */}
       {showQuestionSelector && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -796,22 +961,39 @@ export const FeedbackManager: React.FC<FeedbackManagerProps> = ({ clients }) => 
               <p className="text-gray-400 text-sm">Quais perguntas você deseja enviar?</p>
             </div>
 
-            <div className="p-4 max-h-[60vh] overflow-y-auto space-y-2">
+            <div className="p-4 max-h-[60vh] overflow-y-auto space-y-6">
               {questions.length === 0 ? (
                 <p className="text-gray-500 text-center py-4">Nenhuma pergunta cadastrada.</p>
               ) : (
-                questions.map((q, idx) => (
-                  <div
-                    key={q.id}
-                    onClick={() => toggleQuestionSelection(q.text)}
-                    className={`flex items-start p-3 rounded-xl border cursor-pointer transition-all ${selectedQuestionsToSend.includes(q.text) ? 'bg-primary-500/10 border-primary-500/50' : 'bg-dark-900 border-gray-700 hover:border-gray-500'}`}
-                  >
-                    <div className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border mr-3 ${selectedQuestionsToSend.includes(q.text) ? 'bg-primary-500 border-primary-500' : 'border-gray-600'}`}>
-                      {selectedQuestionsToSend.includes(q.text) && <CheckCircle2 size={14} className="text-white" />}
+                ['Geral', ...serviceTypes.map(s => s.name)].map(category => {
+                  const categoryQuestions = questions.filter(q =>
+                    category === 'Geral'
+                      ? (!q.category || q.category === 'Geral')
+                      : q.category === category
+                  );
+
+                  if (categoryQuestions.length === 0) return null;
+
+                  return (
+                    <div key={category}>
+                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 border-b border-gray-700/50 pb-1 ml-1">{category}</h4>
+                      <div className="space-y-2">
+                        {categoryQuestions.map((q) => (
+                          <div
+                            key={q.id}
+                            onClick={() => toggleQuestionSelection(q.text)}
+                            className={`flex items-start p-3 rounded-xl border cursor-pointer transition-all ${selectedQuestionsToSend.includes(q.text) ? 'bg-primary-500/10 border-primary-500/50' : 'bg-dark-900 border-gray-700 hover:border-gray-500'}`}
+                          >
+                            <div className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border mr-3 ${selectedQuestionsToSend.includes(q.text) ? 'bg-primary-500 border-primary-500' : 'border-gray-600'}`}>
+                              {selectedQuestionsToSend.includes(q.text) && <CheckCircle2 size={14} className="text-white" />}
+                            </div>
+                            <span className={`text-sm ${selectedQuestionsToSend.includes(q.text) ? 'text-white' : 'text-gray-400'}`}>{q.text}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <span className={`text-sm ${selectedQuestionsToSend.includes(q.text) ? 'text-white' : 'text-gray-400'}`}>{idx + 1}. {q.text}</span>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 

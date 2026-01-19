@@ -41,7 +41,7 @@ export const sendMessage = async ({ phone, message, attachmentUrl }: SendMessage
                     },
                     mediatype: "document",
                     mimetype: "application/pdf",
-                    caption: message,
+                    caption: message || "",
                     media: attachmentUrl,
                     fileName: "Plano.pdf"
                 };

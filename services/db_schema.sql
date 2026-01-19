@@ -65,3 +65,22 @@ create policy "Allow all access" on public.feedback_submissions for all using (t
 -- Storage Policies
 create policy "Allow Public Access" on storage.objects for all using ( bucket_id = 'pdfs' );
 create policy "Allow Upload" on storage.objects for insert with check ( bucket_id = 'pdfs' );
+
+-- [MODULO AI]
+-- Adicionar campos de IA na tabela clients
+ALTER TABLE public.clients 
+ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS ai_mode TEXT DEFAULT 'standard';
+
+-- Tabela para armazenar histórico de mensagens
+CREATE TABLE IF NOT EXISTS public.ai_messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  client_id UUID REFERENCES public.clients(id) ON DELETE CASCADE,
+  role TEXT CHECK (role IN ('user', 'assistant', 'system')),
+  content TEXT,
+  metadata JSONB
+);
+
+ALTER TABLE public.ai_messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access" on public.ai_messages for all using (true) with check (true);
