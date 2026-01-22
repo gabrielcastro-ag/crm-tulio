@@ -21,9 +21,25 @@ console.log(`Checking for pending messages every 60 seconds...`);
 
 const checkAndSend = async () => {
     try {
-        const now = new Date().toISOString();
+        const now = new Date();
+        const nowIso = now.toISOString();
 
-        // 1. Fetch pending schedules that are due
+        // 1. Check Global Cooldown from app_settings
+        const { data: setting } = await supabase
+            .from('app_settings')
+            .select('value')
+            .eq('key', 'next_allowed_send_at')
+            .single();
+
+        if (setting && setting.value) {
+            const nextAllowed = new Date(setting.value);
+            if (now < nextAllowed) {
+                // console.log(`[Stagger] Waiting... Next send allowed at ${nextAllowed.toLocaleTimeString()}`);
+                return;
+            }
+        }
+
+        // 2. Fetch pending schedules that are due (Process ONLY ONE at a time to stagger)
         const { data: schedules, error } = await supabase
             .from('schedules')
             .select(`
@@ -34,18 +50,30 @@ const checkAndSend = async () => {
                 )
             `)
             .eq('status', 'pending')
-            .lte('date', now); // Less than or equal to now
+            .lte('date', nowIso) // Less than or equal to now
+            .order('date', { ascending: true })
+            .limit(1); // ONLY ONE
 
         if (error) throw error;
 
         if (schedules && schedules.length > 0) {
-            console.log(`Found ${schedules.length} pending items.`);
+            const item = schedules[0];
+            console.log(`[Stagger] Processing item ${item.id} for ${item.clients?.name}`);
 
-            for (const item of schedules) {
-                await processItem(item);
+            const success = await processItem(item);
+
+            if (success) {
+                // 3. Set NEW random delay (5 to 10 minutes)
+                const delayMinutes = Math.floor(Math.random() * (10 - 5 + 1)) + 5;
+                const nextRun = new Date(now.getTime() + delayMinutes * 60 * 1000);
+
+                await supabase
+                    .from('app_settings')
+                    .update({ value: nextRun.toISOString() })
+                    .eq('key', 'next_allowed_send_at');
+
+                console.log(`[Stagger] Message sent. Next one allowed in ${delayMinutes} minutes (${nextRun.toLocaleTimeString()})`);
             }
-        } else {
-            // console.log('No pending items.');
         }
 
     } catch (err) {
@@ -57,11 +85,10 @@ const processItem = async (item: any) => {
     const client = item.clients;
     if (!client || !client.phone) {
         console.error(`Client not found or no phone for schedule ${item.id}`);
-        // Mark as failed or ignore?
-        return;
+        // Mark as failed to avoid infinite retry loop
+        await supabase.from('schedules').update({ status: 'failed' }).eq('id', item.id);
+        return false;
     }
-
-    console.log(`Processing item ${item.id} for ${client.name} (${client.phone})`);
 
     try {
         // Send via Evolution API
@@ -76,12 +103,15 @@ const processItem = async (item: any) => {
 
             if (error) console.error(`Failed to update status for ${item.id}`, error);
             else console.log(`✅ Item ${item.id} marked as SENT.`);
+            return true;
         } else {
             console.error(`❌ Failed to send item ${item.id}`);
+            return false;
         }
 
     } catch (err) {
         console.error(`Error processing item ${item.id}`, err);
+        return false;
     }
 };
 
@@ -252,10 +282,22 @@ async function checkFeedbackAutomation() {
 
                             const message = `Olá ${client.name.split(' ')[0]}! 👋\n\nChegou a hora do seu check-in ${typeLabel}.\nPor favor, responda as perguntas no link abaixo:\n\n🔗 ${link}\n\nObrigado! 🚀`;
 
-                            // Send (Async, don't block loop too much)
-                            sendEvolutionMessage(client.phone, message).then(success => {
-                                if (success) console.log(`Feedback LINK sent to ${client.name}`);
-                            });
+                            // 4. Queue message in schedules instead of sending directly
+                            const { error: queueError } = await supabase
+                                .from('schedules')
+                                .insert([{
+                                    client_id: client.id,
+                                    date: new Date().toISOString(),
+                                    type: 'feedback',
+                                    message: message,
+                                    status: 'pending'
+                                }]);
+
+                            if (queueError) {
+                                console.error(`Failed to queue feedback for ${client.name}`, queueError);
+                            } else {
+                                console.log(`Feedback for ${client.name} QUEUED.`);
+                            }
 
                         } catch (err) {
                             console.error(`Error processing Client ${client.name}`, err);
