@@ -106,6 +106,8 @@ const processItem = async (item: any) => {
             return true;
         } else {
             console.error(`❌ Failed to send item ${item.id}`);
+            // Mark as failed to avoid infinite retry loop if it's a permanent error (e.g. invalid number)
+            await supabase.from('schedules').update({ status: 'failed' }).eq('id', item.id);
             return false;
         }
 
@@ -118,7 +120,8 @@ const processItem = async (item: any) => {
 const sendEvolutionMessage = async (phone: string, text: string, attachmentUrl?: string, fileName?: string) => {
     try {
         const cleanPhone = phone.replace(/\D/g, '');
-        const number = `55${cleanPhone}`; // Assuming BR format, adjust if needed
+        // Ensure 55 prefix (Brazil) only if needed (don't duplicate)
+        const number = cleanPhone.startsWith('55') && cleanPhone.length > 11 ? cleanPhone : `55${cleanPhone}`;
 
         let url = '';
         let body: any = {};

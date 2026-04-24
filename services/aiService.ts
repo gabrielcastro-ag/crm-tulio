@@ -1,11 +1,27 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: '/root/mudashape-scheduler/.env' });
+import { File } from 'node:buffer';
+
+// Polyfills for pdf-parse compatibility in Node 18
+if (typeof (global as any).DOMMatrix === 'undefined') {
+    (global as any).DOMMatrix = class { };
+}
+if (typeof (global as any).ImageData === 'undefined') {
+    (global as any).ImageData = class { };
+}
+if (typeof (global as any).Path2D === 'undefined') {
+    (global as any).Path2D = class { };
+}
+// Polyfill for OpenAI File upload (Node 18)
+if (typeof (global as any).File === 'undefined') {
+    (global as any).File = File;
+}
 
 import OpenAI from 'openai';
 import fs from 'fs';
-// @ts-ignore
-import pdfWithErrors from 'pdf-parse';
-
-// Load env if not already loaded (server.ts should load it, but safety duplicate)
-import 'dotenv/config';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfWithErrors = require('pdf-parse');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY,
@@ -31,10 +47,10 @@ export const transcribeAudio = async (audioPath: string): Promise<string> => {
     }
 };
 
-export const analyzeImage = async (base64Image: string, prompt: string = "O que tem nesta imagem?"): Promise<string> => {
+export const analyzeImage = async (base64Image: string, prompt: string = "O que tem nesta imagem?", mimeType: string = "image/jpeg"): Promise<string> => {
     try {
         const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gpt-4.1",
             messages: [
                 {
                     role: "user",
@@ -43,7 +59,7 @@ export const analyzeImage = async (base64Image: string, prompt: string = "O que 
                         {
                             type: "image_url",
                             image_url: {
-                                "url": `data:image/jpeg;base64,${base64Image}`,
+                                "url": `data:${mimeType};base64,${base64Image}`,
                             },
                         },
                     ],
@@ -79,7 +95,7 @@ export const generateResponse = async (
         ];
 
         const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gpt-4.1",
             messages: messages as any,
         });
 
